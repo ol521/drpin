@@ -22,3 +22,14 @@ LaunchProcess
 
     if (numProcs == 0) panic("No process config found. Config file needs at least a process0 entry");
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+ARGV: /work2/z50038971/dynamorio/clients/drpin/executables/../drpin/build/libdrpin.so
+ARGV: --pintool
+ARGV: ./obj-intel64-drpin/M000100_inscount0.so
+ARGV: --pintool_op
+ARGV: 
+The determinant is: 14
+Count 170117
+
+ARGC: 5
