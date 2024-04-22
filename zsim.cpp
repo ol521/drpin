@@ -63,6 +63,22 @@
 #include "virt/virt.h"
 #include <cstdlib>
 
+// Initialization code and global per-process data
+
+enum VdsoFunc {VF_CLOCK_GETTIME, VF_GETTIMEOFDAY, VF_TIME, VF_GETCPU};
+
+static std::unordered_map<ADDRINT, VdsoFunc> vdsoEntryMap;
+static uintptr_t vdsoStart;
+static uintptr_t vdsoEnd;
+
+//Used to warn
+static uintptr_t vsyscallStart;
+static uintptr_t vsyscallEnd;
+static bool vsyscallWarned = false;
+
+// Helper function from parse_vsdo.cpp
+extern void vdso_init_from_sysinfo_ehdr(uintptr_t base);
+extern void *vdso_sym(const char *version, const char *name);
 //#include <signal.h> //can't include this, conflicts with PIN's
 
 /* Command-line switches (used to pass info from harness that cannot be passed through the config file, most config is file-based) */
@@ -653,61 +669,31 @@ static Section FindSection(const char* sec) {
     return res;
 }
 
-// Initialization code and global per-process data
 
-enum VdsoFunc {VF_CLOCK_GETTIME, VF_GETTIMEOFDAY, VF_TIME, VF_GETCPU};
-
-static std::unordered_map<ADDRINT, VdsoFunc> vdsoEntryMap;
-static uintptr_t vdsoStart;
-static uintptr_t vdsoEnd;
-
-//Used to warn
-static uintptr_t vsyscallStart;
-static uintptr_t vsyscallEnd;
-static bool vsyscallWarned = false;
-
-// Helper function from parse_vsdo.cpp
-extern void vdso_init_from_sysinfo_ehdr(uintptr_t base);
-extern void *vdso_sym(const char *version, const char *name);
 
 void VdsoInsertFunc(const char* fName, VdsoFunc func) {
-    std::cout<<"I Knew It1"<<std::endl;
     ADDRINT vdsoFuncAddr = (ADDRINT) vdso_sym("LINUX_2.6", fName);
-    std::cout<<"I Knew It2: "<<vdsoFuncAddr<<std::endl;
     if (vdsoFuncAddr == 0) {
-        std::cout<<"I Knew It3"<<std::endl;
         warn("Did not find %s in vDSO", fName);
     } else {
-        std::cout<<"I Knew It4"<<std::endl;
         vdsoEntryMap[vdsoFuncAddr] = func;
     }
-    std::cout<<"I Knew It5"<<std::endl;
 }
 
 void VdsoInit() {
-    std::cout<<"V1"<<std::endl;
     Section vdso = FindSection("vdso");
-    std::cout<<"V2"<<std::endl;
     vdsoStart = vdso.start;
-    std::cout<<"V3"<<std::endl;
     vdsoEnd = vdso.end;
-    std::cout<<"V4"<<std::endl;
 
     if (!vdsoEnd) {
-        std::cout<<"V5"<<std::endl;
         // Non-fatal, but should not happen --- even static binaries get vDSO AFAIK
-        warn("vDSO not found");
-        std::cout<<"V6"<<std::endl;
+        warn("vDSO not found");;
         return;
     }
-    std::cout<<"V7"<<std::endl;
     vdso_init_from_sysinfo_ehdr(vdsoStart);
-    std::cout<<"V8"<<std::endl;
 
     VdsoInsertFunc("clock_gettime", VF_CLOCK_GETTIME);
-    std::cout<<"V9"<<std::endl;
     VdsoInsertFunc("__vdso_clock_gettime", VF_CLOCK_GETTIME);
-    std::cout<<"V10"<<std::endl;
 
     VdsoInsertFunc("gettimeofday", VF_GETTIMEOFDAY);
     VdsoInsertFunc("__vdso_gettimeofday", VF_GETTIMEOFDAY);
@@ -1339,13 +1325,13 @@ class SyncEvent: public Event {
 };
 
 VOID FFThread(VOID* arg) {
+    std::cout<<"Hello from FFThread"<<std::endl;
     futex_lock(&zinfo->ffToggleLocks[procIdx]); //initialize
     info("FF control Thread TID %ld", syscall(SYS_gettid));
 
     while (true) {
         //block ourselves until someone wakes us up with an unlock
         bool locked = futex_trylock_nospin_timeout(&zinfo->ffToggleLocks[procIdx], 5*BILLION /*5s timeout*/);
-
         if (!locked) { //timeout
             if (zinfo->terminationConditionMet) {
                 info("Terminating FF control thread");
@@ -1550,48 +1536,32 @@ int main(int argc, char *argv[]) {
     if (zinfo->sched) zinfo->sched->processCleanup(procIdx);
 
     VirtCaptureClocks(false);
-    std::cout<<"1"<<std::endl;
     FFIInit();
-    std::cout<<"2"<<std::endl;
 
     VirtInit();
-    std::cout<<"3"<<std::endl;
 
     //Register instrumentation
     TRACE_AddInstrumentFunction(Trace, 0);
-    std::cout<<"4"<<std::endl;
     VdsoInit(); //initialized vDSO patching information (e.g., where all the possible vDSO entry points are)
-    std::cout<<"5"<<std::endl;
 
     PIN_AddThreadStartFunction(ThreadStart, 0);
-    std::cout<<"6"<<std::endl;
     PIN_AddThreadFiniFunction(ThreadFini, 0);
-    std::cout<<"7"<<std::endl;
 
     PIN_AddSyscallEntryFunction(SyscallEnter, 0);
-    std::cout<<"8"<<std::endl;
     PIN_AddSyscallExitFunction(SyscallExit, 0);
-    std::cout<<"9"<<std::endl;
     PIN_AddContextChangeFunction(ContextChange, 0);
-    std::cout<<"10"<<std::endl;
 
     PIN_AddFiniFunction(Fini, 0);
-    std::cout<<"11"<<std::endl;
 
     //Follow exec and fork
     PIN_AddFollowChildProcessFunction(FollowChild, 0);
-    std::cout<<"12"<<std::endl;
     PIN_AddForkFunction(FPOINT_BEFORE, BeforeFork, 0);
-    std::cout<<"13"<<std::endl;
     PIN_AddForkFunction(FPOINT_AFTER_IN_PARENT, AfterForkInParent, 0);
-    std::cout<<"14"<<std::endl;
     PIN_AddForkFunction(FPOINT_AFTER_IN_CHILD, AfterForkInChild, 0);
-    std::cout<<"15"<<std::endl;
 
     //FFwd control
     //OK, screw it. Launch this on a separate thread, and forget about signals... the caller will set a shared memory var. PIN is hopeless with signal instrumentation on multithreaded processes!
     PIN_SpawnInternalThread(FFThread, nullptr, 64*1024, nullptr);
-    std::cout<<"16"<<std::endl;
 
     // Start trace-driven or exec-driven sim
     if (zinfo->traceDriven) {
