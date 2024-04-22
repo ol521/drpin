@@ -61,8 +61,7 @@
 #include "stats.h"
 #include "trace_driver.h"
 #include "virt/virt.h"
-/////////////////////////////////////////////////////////////////Modify//////////////////////////////////////////////////////////////////////////////////////////////
-#include "config.h"
+#include <cstdlib>
 
 //#include <signal.h> //can't include this, conflicts with PIN's
 
@@ -73,20 +72,19 @@ KNOB<INT32> KnobProcIdx(KNOB_MODE_WRITEONCE, "pintool",
 
 KNOB<INT32> KnobShmid(KNOB_MODE_WRITEONCE, "pintool",
         "shmid", "0", "SysV IPC shared memory id used when running in multi-process mode");
-/////////////////////////////////////////////////////////////////Modify////////////////////////////////////////////////////////////////////////////////////////
-// KNOB<string> KnobConfigFile(KNOB_MODE_WRITEONCE, "pintool",
-//         "config", "zsim.cfg", "config file name (only needed for the first simulated process)");
-const char* KnobConfigFile = "/work2/z50038971/zsim/tests/simple.cfg";
-const char* KnobOutputDir = "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout/";
+
+KNOB<string> KnobConfigFile(KNOB_MODE_WRITEONCE, "pintool",
+        "config", "zsim.cfg", "config file name (only needed for the first simulated process)");
 
 //We need to know these as soon as we start, otherwise we could not log anything until we attach and read the config
 KNOB<bool> KnobLogToFile(KNOB_MODE_WRITEONCE, "pintool",
         "logToFile", "false", "true if all messages should be logged to a logfile instead of stdout/err");
 
-/////////////////////////////////////////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////
-// KNOB<string> KnobOutputDir(KNOB_MODE_WRITEONCE, "pintool",
-//         "outputDir", "./", "absolute path to write output files into");
+KNOB<string> KnobOutputDir(KNOB_MODE_WRITEONCE, "pintool",
+        "outputDir", "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout", "absolute path to write output files into");
 
+const char* outputDir ="/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout";
+const char* configFile ="/work2/z50038971/zsim/tests/simple.cfg";
 
 
 /* ===================================================================== */
@@ -673,29 +671,43 @@ extern void vdso_init_from_sysinfo_ehdr(uintptr_t base);
 extern void *vdso_sym(const char *version, const char *name);
 
 void VdsoInsertFunc(const char* fName, VdsoFunc func) {
+    std::cout<<"I Knew It1"<<std::endl;
     ADDRINT vdsoFuncAddr = (ADDRINT) vdso_sym("LINUX_2.6", fName);
+    std::cout<<"I Knew It2: "<<vdsoFuncAddr<<std::endl;
     if (vdsoFuncAddr == 0) {
+        std::cout<<"I Knew It3"<<std::endl;
         warn("Did not find %s in vDSO", fName);
     } else {
+        std::cout<<"I Knew It4"<<std::endl;
         vdsoEntryMap[vdsoFuncAddr] = func;
     }
+    std::cout<<"I Knew It5"<<std::endl;
 }
 
 void VdsoInit() {
+    std::cout<<"V1"<<std::endl;
     Section vdso = FindSection("vdso");
+    std::cout<<"V2"<<std::endl;
     vdsoStart = vdso.start;
+    std::cout<<"V3"<<std::endl;
     vdsoEnd = vdso.end;
+    std::cout<<"V4"<<std::endl;
 
     if (!vdsoEnd) {
+        std::cout<<"V5"<<std::endl;
         // Non-fatal, but should not happen --- even static binaries get vDSO AFAIK
         warn("vDSO not found");
+        std::cout<<"V6"<<std::endl;
         return;
     }
-
+    std::cout<<"V7"<<std::endl;
     vdso_init_from_sysinfo_ehdr(vdsoStart);
+    std::cout<<"V8"<<std::endl;
 
     VdsoInsertFunc("clock_gettime", VF_CLOCK_GETTIME);
+    std::cout<<"V9"<<std::endl;
     VdsoInsertFunc("__vdso_clock_gettime", VF_CLOCK_GETTIME);
+    std::cout<<"V10"<<std::endl;
 
     VdsoInsertFunc("gettimeofday", VF_GETTIMEOFDAY);
     VdsoInsertFunc("__vdso_gettimeofday", VF_GETTIMEOFDAY);
@@ -1441,13 +1453,14 @@ int main(int argc, char *argv[]) {
 
     //Register an internal exception handler (ASAP, to catch segfaults in init)
     PIN_AddInternalExceptionHandler(InternalExceptionHandler, nullptr);
+
     procIdx = KnobProcIdx.Value();
     char header[64];
     snprintf(header, sizeof(header), "[S %d] ", procIdx);
     std::stringstream logfile_ss;
-////////////////////////////////////////////////////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////////////////////
-    logfile_ss << KnobOutputDir << "/zsim.log." << procIdx;
+    logfile_ss << "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout" << "/zsim.log." << procIdx;
     InitLog(header, KnobLogToFile.Value()? logfile_ss.str().c_str() : nullptr);
+
     //If parent dies, kill us
     //This avoids leaving strays running in any circumstances, but may be too heavy-handed with arbitrary process hierarchies.
     //If you ever need this disabled, sim.pinOptions = "-injection child" does the trick
@@ -1456,21 +1469,23 @@ int main(int argc, char *argv[]) {
     }
 
     info("Started instance");
+
     //Decrease priority to avoid starving system processes (e.g. gluster)
     //setpriority(PRIO_PROCESS, getpid(), 10);
     //info("setpriority, new prio %d", getpriority(PRIO_PROCESS, getpid()));
-    /////////////////////////////////////////////////////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////////////////
-    const char* configFile = "/work2/z50038971/zsim/tests/simple.cfg";
-    Config conf(configFile);
-    uint32_t gmSize = conf.get<uint32_t>("sim.gmMBytes", (1<<10) /*default 1024MB*/);
-    info("Creating global segment, %d MBs", gmSize);
-    int shmid = gm_init(((size_t)gmSize) << 20);
-    info("Global segment shmid = %d", shmid);
-    //gm_attach(shmid);
+    const char* str_shmid = getenv("SHMID");
+    if (str_shmid == nullptr) {
+        std::cerr << "Environment variable MY_VARIABLE is not set" << std::endl;
+        return 1;
+    }
+    int int_shmid = std::stoi(str_shmid);
+    std::cout<<"INT_SHMID: "<<int_shmid<<std::endl;
+    gm_attach(int_shmid);
+
     bool masterProcess = false;
     if (procIdx == 0 && !gm_isready()) {  // process 0 can exec() without fork()ing first, so we must check gm_isready() to ensure we don't initialize twice
         masterProcess = true;
-        SimInit(KnobConfigFile, KnobOutputDir, shmid);
+        SimInit(configFile, outputDir, int_shmid);
     } else {
         while (!gm_isready()) usleep(1000);  // wait till proc idx 0 initializes everything
         zinfo = static_cast<GlobSimInfo*>(gm_get_glob_ptr());
@@ -1533,33 +1548,50 @@ int main(int argc, char *argv[]) {
     info("procMask: 0x%lx", procMask);
 
     if (zinfo->sched) zinfo->sched->processCleanup(procIdx);
+
     VirtCaptureClocks(false);
+    std::cout<<"1"<<std::endl;
     FFIInit();
+    std::cout<<"2"<<std::endl;
 
     VirtInit();
+    std::cout<<"3"<<std::endl;
 
     //Register instrumentation
     TRACE_AddInstrumentFunction(Trace, 0);
+    std::cout<<"4"<<std::endl;
     VdsoInit(); //initialized vDSO patching information (e.g., where all the possible vDSO entry points are)
+    std::cout<<"5"<<std::endl;
 
     PIN_AddThreadStartFunction(ThreadStart, 0);
+    std::cout<<"6"<<std::endl;
     PIN_AddThreadFiniFunction(ThreadFini, 0);
+    std::cout<<"7"<<std::endl;
 
     PIN_AddSyscallEntryFunction(SyscallEnter, 0);
+    std::cout<<"8"<<std::endl;
     PIN_AddSyscallExitFunction(SyscallExit, 0);
+    std::cout<<"9"<<std::endl;
     PIN_AddContextChangeFunction(ContextChange, 0);
+    std::cout<<"10"<<std::endl;
 
     PIN_AddFiniFunction(Fini, 0);
+    std::cout<<"11"<<std::endl;
 
     //Follow exec and fork
     PIN_AddFollowChildProcessFunction(FollowChild, 0);
+    std::cout<<"12"<<std::endl;
     PIN_AddForkFunction(FPOINT_BEFORE, BeforeFork, 0);
+    std::cout<<"13"<<std::endl;
     PIN_AddForkFunction(FPOINT_AFTER_IN_PARENT, AfterForkInParent, 0);
+    std::cout<<"14"<<std::endl;
     PIN_AddForkFunction(FPOINT_AFTER_IN_CHILD, AfterForkInChild, 0);
+    std::cout<<"15"<<std::endl;
 
     //FFwd control
     //OK, screw it. Launch this on a separate thread, and forget about signals... the caller will set a shared memory var. PIN is hopeless with signal instrumentation on multithreaded processes!
     PIN_SpawnInternalThread(FFThread, nullptr, 64*1024, nullptr);
+    std::cout<<"16"<<std::endl;
 
     // Start trace-driven or exec-driven sim
     if (zinfo->traceDriven) {
