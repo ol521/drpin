@@ -102,7 +102,7 @@ def buildSim(cppFlags, dir, type, pgo=None):
     # static version of libdwarf.
 
     # Pin 2.14 uses unambiguous libpindwarf
-    pindwarfPath = joinpath(PINPATH, "intel64/lib-ext/libdwarf.a")
+    pindwarfPath = "/work2/z50038971/dynamorio/ext/drsyms/libelftc-macho/lib64/libdwarf.a"
     pindwarfLib = File(pindwarfPath)
     if not os.path.exists(pindwarfPath):
         pindwarfLib = "pindwarf"
