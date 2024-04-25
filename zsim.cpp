@@ -266,6 +266,7 @@ VOID NOPPredLoadStoreSingle(THREADID tid, ADDRINT addr, BOOL pred) {}
 
 // FF is basically NOP except for basic blocks
 VOID FFBasicBlock(THREADID tid, ADDRINT bblAddr, BblInfo* bblInfo) {
+    std::cout<<"Hello from FFBasicBlock"<<std::endl;
     if (unlikely(!procTreeNode->isInFastForward())) {
         SimThreadStart(tid);
     }
@@ -359,6 +360,7 @@ VOID FFIAdvance() {
 }
 
 VOID FFIBasicBlock(THREADID tid, ADDRINT bblAddr, BblInfo* bblInfo) {
+    std::cout<<"Hello from FFIBasicBlock"<<std::endl;
     ffiInstrsDone += bblInfo->instrs;
     if (unlikely(ffiInstrsDone >= ffiInstrsLimit)) {
         FFIAdvance();
@@ -687,7 +689,7 @@ void VdsoInit() {
 
     if (!vdsoEnd) {
         // Non-fatal, but should not happen --- even static binaries get vDSO AFAIK
-        warn("vDSO not found");;
+        warn("vDSO not found");
         return;
     }
     vdso_init_from_sysinfo_ehdr(vdsoStart);
@@ -866,6 +868,7 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v) {
         info("Shadow thread %d starting", tid);
         fPtrs[tid] = nopPtrs;
     } else {
+        std::cout<<"Hello from ThreadStart"<<std::endl;
         //Start normal thread
         SimThreadStart(tid);
     }
@@ -1186,6 +1189,7 @@ VOID HandleMagicOp(THREADID tid, ADDRINT op) {
                 info("Thread %d: Treating REGISTER_THREAD magic op as NOP", tid);
             } else {
                 if (fPtrs[tid].type == FPTR_NOP) {
+                    std::cout<<"Hello from HandleMagicOp"<<std::endl;
                     SimThreadStart(tid);
                 } else {
                     warn("Thread %d: Treating REGISTER_THREAD magic op as NOP, thread already registered", tid);
@@ -1327,22 +1331,34 @@ class SyncEvent: public Event {
 VOID FFThread(VOID* arg) {
     std::cout<<"Hello from FFThread"<<std::endl;
     futex_lock(&zinfo->ffToggleLocks[procIdx]); //initialize
+    std::cout<<"PROCIDX: "<<procIdx<<std::endl;
+    std::cout<<"PROCIDX: "<<zinfo->ffToggleLocks[procIdx]<<std::endl;
     info("FF control Thread TID %ld", syscall(SYS_gettid));
+    std::cout<<"ff1"<<std::endl;
 
     while (true) {
+        std::cout<<"ff2"<<std::endl;
         //block ourselves until someone wakes us up with an unlock
         bool locked = futex_trylock_nospin_timeout(&zinfo->ffToggleLocks[procIdx], 5*BILLION /*5s timeout*/);
+        std::cout<<"ff3"<<std::endl;
         if (!locked) { //timeout
+            std::cout<<"ff4"<<std::endl;
             if (zinfo->terminationConditionMet) {
+                std::cout<<"ff5"<<std::endl;
                 info("Terminating FF control thread");
+                std::cout<<"ff6"<<std::endl;
                 SimEnd();
+                std::cout<<"ff7"<<std::endl;
                 panic("Should not be reached");
             }
-            //info("FF control thread wakeup");
+            std::cout<<"ff8"<<std::endl;
+            info("FF control thread wakeup");
             continue;
         }
+        std::cout<<"ff9"<<std::endl;
 
         futex_lock(&zinfo->ffLock);
+        std::cout<<"ff10"<<std::endl;
         if (procTreeNode->isInFastForward()) {
             GetVmLock(); //like a callback. This disallows races on all syscall instrumentation, etc.
             info("Exiting fast forward");
@@ -1576,6 +1592,7 @@ int main(int argc, char *argv[]) {
         SimEnd();
     } else {
         // Never returns
+        std::cout<<"Hello from PIN-startProgram"<<std::endl;
         PIN_StartProgram();
     }
     return 0;
