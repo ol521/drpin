@@ -295,8 +295,10 @@ void LaunchProcess(uint32_t procIdx) {
             int newPers = personality(((unsigned int)-1));
             if ((newPers & ADDR_NO_RANDOMIZE) == 0) panic("personality() call was not honored! old 0x%x new 0x%x", pers, newPers);
         }
+        const char* abc[1];
+        abc[0] = "";
 
-        if (execvp(aptrs[0], (char* const*)aptrs) == -1) {
+        if (execvp("/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/run_drpin.sh", (char* const*)abc) == -1) {
             perror("Could not exec, killing child");
             panic("Could not exec %s", aptrs[0]);
         } else {
@@ -323,7 +325,7 @@ int main(int argc, char *argv[]) {
 
     //Canonicalize paths --- because we change dirs, we deal in absolute paths
     const char* configFile = realpath(argv[1], nullptr);
-    const char* outputDir = getcwd(nullptr, 0); //already absolute
+    const char* outputDir = "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout"; //already absolute
 
     Config conf(configFile);
 
@@ -360,6 +362,16 @@ int main(int argc, char *argv[]) {
     info("Creating global segment, %d MBs", gmSize);
     int shmid = gm_init(((size_t)gmSize) << 20 /*MB to Bytes*/);
     info("Global segment shmid = %d", shmid);
+    // Convert integer to string
+    std::string str_shmid = std::to_string(shmid);
+
+    // Set environment variable
+    setenv("SHMID", str_shmid.c_str(), 1);
+    const char* str_shmid2 = getenv("SHMID");
+    if (str_shmid2 == nullptr) {
+        std::cerr << "Environment variable MY_VARIABLE is not set" << std::endl;
+        return 1;
+    }
     //fprintf(stderr, "%sGlobal segment shmid = %d\n", logHeader, shmid); //hack to print shmid on both streams
     //fflush(stderr);
 
