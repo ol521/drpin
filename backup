@@ -1,4 +1,4 @@
-/** $lic$
+ /** $lic$
  * Copyright (C) 2012-2015 by Massachusetts Institute of Technology
  * Copyright (C) 2010-2013 by The Board of Trustees of Stanford University
  *
@@ -59,9 +59,28 @@ void DynUop::clear() {
 
 Decoder::Instr::Instr(INS _ins) : ins(_ins), numLoads(0), numInRegs(0), numOutRegs(0), numStores(0) {
     uint32_t numOperands = INS_OperandCount(ins);
+    //UINT32 number_of_operands = INS_OperandCount(ins);
+    //std::cout << "Number of operands: " << number_of_operands<<" ";
+    // Get_eflags(ins);
+    // print_assembly(ins);
+    // INS_OperandIsRip(ins);
 
+    if(INS_OperandIsRflag(ins)){
+        if(INS_RflagRead(ins)){
+            inRegs[numInRegs++] = REG_RFLAGS;
+        }else{
+            outRegs[numOutRegs++] = REG_RFLAGS;
+        }
+    }
+    if(INS_OperandIsRip(ins)){
+        inRegs[numInRegs++] = REG_RIP;
+        outRegs[numOutRegs++] = REG_RIP;
+    } 
+    print_assembly(ins);
     for (uint32_t op = 0; op < numOperands; op++) {
-        //std::cout << "INS_ADDRESS: 0x" << INS_Address(ins)<< ": " << INS_Disassemble(ins) << std::endl;
+        // print_reg(INS_OperandReg(ins, op));
+        // std::cout << "Operand_" << op << " = " << INS_OperandReg(ins, op)<<std::endl;
+        //std::cout<< (INS_OperandRead(ins, op) ? (" (READ) | ") : " (WRITE) |");
         bool read = INS_OperandRead(ins, op);
         bool write = INS_OperandWritten(ins, op);
         assert(read || write);
@@ -79,30 +98,23 @@ Decoder::Instr::Instr(INS _ins) : ins(_ins), numLoads(0), numInRegs(0), numOutRe
             // more infuriatingly, IsReg. despite being one operand, address
             // generators may introduce dependencies on up to two registers: the
             // base and index registers
-            assert(INS_OperandReadOnly(ins, op));
+            //assert(INS_OperandReadOnly(ins, op));
 
             // base register; optional
             REG reg = INS_OperandMemoryBaseReg(ins, op);
-            if (true) inRegs[numInRegs++] = REG_FullRegName(reg);
-////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-     ////replaced REG_valid(reg) with true
+            if (REG_valid(reg)) inRegs[numInRegs++] = REG_FullRegName(reg);
+
             // index register; optional
             reg = INS_OperandMemoryIndexReg(ins, op);
-            if (true) inRegs[numInRegs++] = REG_FullRegName(reg);
-////////////////////////////Modify////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-     ////replaced REG_valid(reg) with true
-        } else if (INS_OperandIsImmediate(ins, op)
-                   || true) {
-////////////////////////////Modify//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /////replaced INS_OperandIsBranchDisplacement(ins, op) with true
+            if (REG_valid(reg)) inRegs[numInRegs++] = REG_FullRegName(reg);
+        } else if (INS_OperandIsImmediate(ins, op) || INS_OperandIsBranchDisplacement(ins, op)) {
+            std::cout<<"JNZ"<<std::endl;
             // No need to do anything for immediate operands
         } else if (INS_OperandReg(ins, op) == REG_X87) {
             // We don't model x87 accurately in general
             //reportUnhandledCase(*this, "Instr");
         } else {
-           // assert(INS_OperandIsImplicit(ins, op));
-////////////////////////////Modify//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-      ///commented out the assert(INS_OperandIsImplicit(ins, op));
+            //assert(INS_OperandIsImplicit(ins, op));
             // Pin classifies the use and update of RSP in various stack
             // operations as "implicit" operands. Although they contribute to
             // OperandCount, OperandIsReg surprisingly returns false.
@@ -118,11 +130,8 @@ Decoder::Instr::Instr(INS _ins) : ins(_ins), numLoads(0), numInRegs(0), numOutRe
 
             // [victory] I wish these assertion weren't true, so we could
             //           cleanly check what the implicit register operand is.
-            //assert(!REG_valid(INS_OperandReg(ins, op)));
-            //assert(!REG_valid(INS_OperandMemoryBaseReg(ins, op)));
-////////////////////////////Modify//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-      ///commented out the             assert(!REG_valid(INS_OperandReg(ins, op)));
-           /// assert(!REG_valid(INS_OperandMemoryBaseReg(ins, op)));         
+            assert(!REG_valid(INS_OperandReg(ins, op)));
+            assert(!REG_valid(INS_OperandMemoryBaseReg(ins, op)));
         }
     }
 
@@ -551,14 +560,12 @@ void Decoder::dropStackRegister(Instr& instr) {
 
 
 bool Decoder::decodeInstr(INS ins, DynUopVec& uops) {
-    //std::cout<<"Hello from decodeInstr"<<std::endl;
     uint32_t initialUops = uops.size();
     bool inaccurate = false;
     xed_category_enum_t category = (xed_category_enum_t) INS_Category(ins);
     xed_iclass_enum_t opcode = (xed_iclass_enum_t) INS_Opcode(ins);
 
     Instr instr(ins);
-
     bool isLocked = false;
     // NOTE(dsm): IsAtomicUpdate == xchg or LockPrefix (xchg has in implicit lock prefix)
     if (INS_IsAtomicUpdate(instr.ins)) {
@@ -1275,37 +1282,23 @@ bool Decoder::canFuse(INS ins) {
 }
 
 bool Decoder::decodeFusedInstrs(INS ins, DynUopVec& uops) {
-    //assert(canFuse(ins)); //this better be true :)
+    assert(canFuse(ins)); //this better be true :)
 
     Instr instr(ins);
     Instr branch(INS_Next(ins));
 
-    // std::cout<<"instr.numOutRegs: "<<instr.numOutRegs<<std::endl;
-    // std::cout<<"instr.outRegs[0]: "<<instr.outRegs[0]<<std::endl;
-    // std::cout<<"branch.numOutRegs: "<<branch.numOutRegs<<std::endl;
-    // std::cout<<"branch.OutRegs[0]: "<<branch.outRegs[0]<<std::endl;
-    // std::cout<<"REG_RFLAGS: "<<REG_RFLAGS<<std::endl;
-    // std::cout<<"REG_RIP: "<<REG_RIP<<std::endl;
-
     //instr should have 2 inputs (regs/mem), and 1 output (rflags), and branch should have 2 inputs (rip, rflags) and 1 output (rip)
+    //print_assembly(ins);
 
-
-
-    // if (instr.numOutRegs != 1  || instr.outRegs[0] !=  REG_RFLAGS ||
-    //     branch.numOutRegs != 1 || branch.outRegs[0] != REG_RIP)
-    // {
-    //     reportUnhandledCase(instr, "decodeFusedInstrs");
-    //     reportUnhandledCase(branch, "decodeFusedInstrs");
-    // } else {
-    //     instr.outRegs[1] = REG_RIP;
-    //     instr.numOutRegs++;
-    // }
-
-    instr.numOutRegs = 1;
-    instr.outRegs[0] = REG_RFLAGS;
-    branch.numOutRegs = 1;
-    branch.outRegs[0] = REG_RIP;
-
+    if (instr.numOutRegs != 1  || instr.outRegs[0] != REG_RFLAGS ||
+        branch.numOutRegs != 1 || branch.outRegs[0] != REG_RIP)
+    {
+        reportUnhandledCase(instr, "decodeFusedInstrs");
+        reportUnhandledCase(branch, "decodeFusedInstrs");
+    } else {
+        instr.outRegs[1] = REG_RIP;
+        instr.numOutRegs++;
+    }
 
     emitBasicOp(instr, uops, 1, PORT_5);
     return false; //accurate
@@ -1326,7 +1319,6 @@ static std::vector<uint32_t>* bblApproxOpcodes[MAX_BBLS];
 #endif
 
 BblInfo* Decoder::decodeBbl(BBL bbl, bool oooDecoding) {
-    //std::cout<<"Hello from decodeBbl"<<std::endl;
     uint32_t instrs = BBL_NumIns(bbl);
     uint32_t bytes = BBL_Size(bbl);
     BblInfo* bblInfo;
@@ -1358,7 +1350,7 @@ BblInfo* Decoder::decodeBbl(BBL bbl, bool oooDecoding) {
         for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
             bool inaccurate = false;
             uint32_t prevUops = uopVec.size();
-            if (Decoder::canFuse(ins) && false) {
+            if (Decoder::canFuse(ins)) {
                 inaccurate = Decoder::decodeFusedInstrs(ins, uopVec);
                 instrAddr.push_back(INS_Address(ins));
                 instrBytes.push_back(INS_Size(ins));
@@ -1374,7 +1366,6 @@ BblInfo* Decoder::decodeBbl(BBL bbl, bool oooDecoding) {
 
                 curIns+=2;
             } else {
-                //std::cout<<"Not canFuse"<<std::endl;
                 inaccurate = Decoder::decodeInstr(ins, uopVec);
 
                 instrAddr.push_back(INS_Address(ins));
@@ -1554,4 +1545,3 @@ void Decoder::dumpBblProfile() {
 }
 
 #endif
-
