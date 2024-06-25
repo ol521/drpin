@@ -61,9 +61,27 @@
 #include "stats.h"
 #include "trace_driver.h"
 #include "virt/virt.h"
-/////////////////////////////////////////////////////////////////Modify//////////////////////////////////////////////////////////////////////////////////////////////
-#include "config.h"
+#include <cstdlib>
+#include <iomanip>
 
+// Initialization code and global per-process data
+
+
+enum VdsoFunc {VF_CLOCK_GETTIME, VF_GETTIMEOFDAY, VF_TIME, VF_GETCPU};
+extern bool INS_IsXend(INS ins);
+
+static std::unordered_map<ADDRINT, VdsoFunc> vdsoEntryMap;
+static uintptr_t vdsoStart;
+static uintptr_t vdsoEnd;
+
+//Used to warn
+static uintptr_t vsyscallStart;
+static uintptr_t vsyscallEnd;
+static bool vsyscallWarned = false;
+
+// Helper function from parse_vsdo.cpp
+extern void vdso_init_from_sysinfo_ehdr(uintptr_t base);
+extern void *vdso_sym(const char *version, const char *name);
 //#include <signal.h> //can't include this, conflicts with PIN's
 
 /* Command-line switches (used to pass info from harness that cannot be passed through the config file, most config is file-based) */
@@ -73,22 +91,19 @@ KNOB<INT32> KnobProcIdx(KNOB_MODE_WRITEONCE, "pintool",
 
 KNOB<INT32> KnobShmid(KNOB_MODE_WRITEONCE, "pintool",
         "shmid", "0", "SysV IPC shared memory id used when running in multi-process mode");
-/////////////////////////////////////////////////////////////////Modify////////////////////////////////////////////////////////////////////////////////////////
-// KNOB<string> KnobConfigFile(KNOB_MODE_WRITEONCE, "pintool",
-//         "config", "zsim.cfg", "config file name (only needed for the first simulated process)");
-const char* KnobConfigFile = "/work2/z50038971/zsim/tests/simple.cfg";
-const char* KnobOutputDir = "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout/";
+
+KNOB<string> KnobConfigFile(KNOB_MODE_WRITEONCE, "pintool",
+        "config", "zsim.cfg", "config file name (only needed for the first simulated process)");
 
 //We need to know these as soon as we start, otherwise we could not log anything until we attach and read the config
 KNOB<bool> KnobLogToFile(KNOB_MODE_WRITEONCE, "pintool",
         "logToFile", "false", "true if all messages should be logged to a logfile instead of stdout/err");
 
-/////////////////////////////////////////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////
-// KNOB<string> KnobOutputDir(KNOB_MODE_WRITEONCE, "pintool",
-//         "outputDir", "./", "absolute path to write output files into");
+KNOB<string> KnobOutputDir(KNOB_MODE_WRITEONCE, "pintool",
+        "outputDir", "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout", "absolute path to write output files into");
 
-
-
+const char* outputDir ="/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout";
+const char* configFile ="/work2/z50038971/zsim/tests/simple.cfg";
 /* ===================================================================== */
 
 INT32 Usage() {
@@ -210,6 +225,7 @@ void Join(uint32_t tid) {
         zinfo->sched->leave(procIdx, tid, cid);
         SimEnd();
     }
+
 
     fPtrs[tid] = cores[tid]->GetFuncPtrs(); //back to normal pointers
 }
@@ -602,6 +618,13 @@ VOID Instruction(INS ins) {
     VdsoInstrument(ins);
 }
 
+std::vector<ADDRINT> addlist;
+int count_num = 0;
+void inscount(ADDRINT instructionAddress){
+    count_num++;
+    addlist.push_back(instructionAddress);
+}
+
 
 VOID Trace(TRACE trace, VOID *v) {
     if (!procTreeNode->isInFastForward() || !zinfo->ffReinstrument) {
@@ -613,9 +636,11 @@ VOID Trace(TRACE trace, VOID *v) {
         }
     }
 
+
     //Instruction instrumentation now here to ensure proper ordering
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
         for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)inscount, IARG_INST_PTR, IARG_END);
             Instruction(ins);
         }
     }
@@ -655,22 +680,7 @@ static Section FindSection(const char* sec) {
     return res;
 }
 
-// Initialization code and global per-process data
 
-enum VdsoFunc {VF_CLOCK_GETTIME, VF_GETTIMEOFDAY, VF_TIME, VF_GETCPU};
-
-static std::unordered_map<ADDRINT, VdsoFunc> vdsoEntryMap;
-static uintptr_t vdsoStart;
-static uintptr_t vdsoEnd;
-
-//Used to warn
-static uintptr_t vsyscallStart;
-static uintptr_t vsyscallEnd;
-static bool vsyscallWarned = false;
-
-// Helper function from parse_vsdo.cpp
-extern void vdso_init_from_sysinfo_ehdr(uintptr_t base);
-extern void *vdso_sym(const char *version, const char *name);
 
 void VdsoInsertFunc(const char* fName, VdsoFunc func) {
     ADDRINT vdsoFuncAddr = (ADDRINT) vdso_sym("LINUX_2.6", fName);
@@ -691,7 +701,6 @@ void VdsoInit() {
         warn("vDSO not found");
         return;
     }
-
     vdso_init_from_sysinfo_ehdr(vdsoStart);
 
     VdsoInsertFunc("clock_gettime", VF_CLOCK_GETTIME);
@@ -1083,12 +1092,29 @@ VOID AfterForkInChild(THREADID tid, const CONTEXT* ctxt, VOID * arg) {
 /** Finalization **/
 
 VOID Fini(int code, VOID * v) {
+    std::cout<<"count: "<<count_num<<std::endl;
     info("Finished, code %d", code);
-    //NOTE: In fini, it appears that info() and writes to stdout in general won't work; warn() and stderr still work fine.
+   //NOTE: In fini, it appears that info() and writes to stdout in general won't work; warn() and stderr still work fine.
     SimEnd();
 }
 
 VOID SimEnd() {
+    std::string directoryPath = "/work2/z50038971/compare";
+
+    std::ofstream nmb(directoryPath + "/Drpin.txt");
+
+    if (!nmb.is_open()) {
+        cerr << "Error opening file" << endl;
+    }
+    for (auto it = addlist.begin(); it != addlist.end(); ++it) {
+        // Create a stringstream object
+        stringstream ss;
+
+        // Set formatting options (optional)
+        ss << setfill('F') << setw(12) << hex << (int)*it;
+        string hex_string = ss.str();
+        nmb<< "0x"<<hex_string << std::endl; // Dereference the iterator to access the element
+    }
     if (__sync_bool_compare_and_swap(&perProcessEndFlag, 0, 1) == false) { //failed, note DEPENDS ON STRONG CAS
         while (true) { //sleep until thread that won exits for us
             struct timespec tm;
@@ -1102,6 +1128,7 @@ VOID SimEnd() {
 
     //per-process
 #ifdef BBL_PROFILING
+    std::cout<<"Hello"<<std::endl;
     Decoder::dumpBblProfile();
 #endif
 
@@ -1116,6 +1143,7 @@ VOID SimEnd() {
             while (zinfo->globalActiveProcs) usleep(100*1000);
             info("All other processes done, terminating");
         }
+
 
         info("Dumping termination stats");
         zinfo->trigger = 20000;
@@ -1333,14 +1361,13 @@ VOID FFThread(VOID* arg) {
     while (true) {
         //block ourselves until someone wakes us up with an unlock
         bool locked = futex_trylock_nospin_timeout(&zinfo->ffToggleLocks[procIdx], 5*BILLION /*5s timeout*/);
-
         if (!locked) { //timeout
             if (zinfo->terminationConditionMet) {
                 info("Terminating FF control thread");
                 SimEnd();
                 panic("Should not be reached");
             }
-            //info("FF control thread wakeup");
+            info("FF control thread wakeup");
             continue;
         }
 
@@ -1435,19 +1462,20 @@ static EXCEPT_HANDLING_RESULT InternalExceptionHandler(THREADID tid, EXCEPTION_I
 /* ===================================================================== */
 
 int main(int argc, char *argv[]) {
-    std::cout<<"Hello from zsim.cpp"<<std::endl;
+    std::cout<<"Hello"<<std::endl;
     PIN_InitSymbols();
     if (PIN_Init(argc, argv)) return Usage();
 
     //Register an internal exception handler (ASAP, to catch segfaults in init)
     PIN_AddInternalExceptionHandler(InternalExceptionHandler, nullptr);
+
     procIdx = KnobProcIdx.Value();
     char header[64];
     snprintf(header, sizeof(header), "[S %d] ", procIdx);
     std::stringstream logfile_ss;
-////////////////////////////////////////////////////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////////////////////
-    logfile_ss << KnobOutputDir << "/zsim.log." << procIdx;
+    logfile_ss << "/work2/z50038971/dynamorio/clients/drpin/tests/pintool_examples/zsim/output_stdout" << "/zsim.log." << procIdx;
     InitLog(header, KnobLogToFile.Value()? logfile_ss.str().c_str() : nullptr);
+
     //If parent dies, kill us
     //This avoids leaving strays running in any circumstances, but may be too heavy-handed with arbitrary process hierarchies.
     //If you ever need this disabled, sim.pinOptions = "-injection child" does the trick
@@ -1456,21 +1484,22 @@ int main(int argc, char *argv[]) {
     }
 
     info("Started instance");
+
     //Decrease priority to avoid starving system processes (e.g. gluster)
     //setpriority(PRIO_PROCESS, getpid(), 10);
     //info("setpriority, new prio %d", getpriority(PRIO_PROCESS, getpid()));
-    /////////////////////////////////////////////////////////////////////////////Modify/////////////////////////////////////////////////////////////////////////////////////////////////////
-    const char* configFile = "/work2/z50038971/zsim/tests/simple.cfg";
-    Config conf(configFile);
-    uint32_t gmSize = conf.get<uint32_t>("sim.gmMBytes", (1<<10) /*default 1024MB*/);
-    info("Creating global segment, %d MBs", gmSize);
-    int shmid = gm_init(((size_t)gmSize) << 20);
-    info("Global segment shmid = %d", shmid);
-    //gm_attach(shmid);
+    const char* str_shmid = getenv("SHMID");
+    if (str_shmid == nullptr) {
+        std::cerr << "Environment variable MY_VARIABLE is not set" << std::endl;
+        return 1;
+    }
+    int int_shmid = std::stoi(str_shmid);
+    gm_attach(int_shmid);
+
     bool masterProcess = false;
     if (procIdx == 0 && !gm_isready()) {  // process 0 can exec() without fork()ing first, so we must check gm_isready() to ensure we don't initialize twice
         masterProcess = true;
-        SimInit(KnobConfigFile, KnobOutputDir, shmid);
+        SimInit(configFile, outputDir, int_shmid);
     } else {
         while (!gm_isready()) usleep(1000);  // wait till proc idx 0 initializes everything
         zinfo = static_cast<GlobSimInfo*>(gm_get_glob_ptr());
@@ -1533,6 +1562,7 @@ int main(int argc, char *argv[]) {
     info("procMask: 0x%lx", procMask);
 
     if (zinfo->sched) zinfo->sched->processCleanup(procIdx);
+
     VirtCaptureClocks(false);
     FFIInit();
 
@@ -1571,6 +1601,7 @@ int main(int argc, char *argv[]) {
             zinfo->globPhaseCycles += zinfo->phaseLength;
         }
         info("Finished trace-driven simulation");
+        
         SimEnd();
     } else {
         // Never returns
