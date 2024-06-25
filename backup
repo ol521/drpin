@@ -160,6 +160,10 @@ Decoder::Instr::Instr(INS _ins) : ins(_ins), numLoads(0), numInRegs(0), numOutRe
     abc<<std::endl;
     for(int i = 0; i< (int)numOutRegs; i++) abc<<static_cast<int>(outRegs[i])<<" ";
     abc<<std::endl;
+    for(int i = 0; i< (int)numLoads; i++) abc<<static_cast<int>(loadOps[i])<<" ";
+    abc<<std::endl;
+    for(int i = 0; i< (int)numStores; i++) abc<<static_cast<int>(storeOps[i])<<" ";
+    abc<<std::endl;
     abc<<"-------------------------------------------"<<std::endl;
 }
 
